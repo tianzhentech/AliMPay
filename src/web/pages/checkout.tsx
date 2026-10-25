@@ -23,15 +23,20 @@ function isMobileBrowser() {
     (/Macintosh/i.test(browserNavigator.userAgent) && browserNavigator.maxTouchPoints > 1);
 }
 
+// Keep this function's identity stable: SWR restarts its polling timer whenever
+// refreshInterval changes, and the 1s clock re-render below would otherwise
+// reset the timer before it ever fires.
+function checkoutRefreshInterval(latest?: CheckoutData) {
+  if (latest && (["paid", "late_paid"].includes(latest.status) || Date.parse(latest.monitor_until) <= Date.now())) return 0;
+  return (latest?.payment_poll_interval_seconds ?? PAYMENT_POLL_INTERVAL_DEFAULT_SECONDS) * 1_000;
+}
+
 export function CheckoutPage() {
   const { token = "" } = useParams();
   const [now, setNow] = useState(Date.now());
   const mobileRedirectAttempted = useRef(false);
   const { data, error, isLoading } = useSWR<CheckoutData>(`/public-api/checkout/${encodeURIComponent(token)}`, swrFetcher, {
-    refreshInterval: (latest) => {
-      if (latest && (["paid", "late_paid"].includes(latest.status) || Date.parse(latest.monitor_until) <= Date.now())) return 0;
-      return (latest?.payment_poll_interval_seconds ?? PAYMENT_POLL_INTERVAL_DEFAULT_SECONDS) * 1_000;
-    },
+    refreshInterval: checkoutRefreshInterval,
     refreshWhenHidden: true,
     shouldRetryOnError: false,
   });
