@@ -83,6 +83,9 @@ export function createApp(services?: Partial<AppServices>) {
   app.route("/admin-api", createAdminRoutes(database, scanner));
   app.route("/", createEasyPayRoutes(database, scanner));
 
+  // Receiver for admin-created test orders: acknowledges the gateway's notification so it is not retried.
+  app.all("/public-api/test-notify", (c) => c.text("success"));
+
   app.get("/public-api/checkout/:token", async (c) => {
     c.header("cache-control", "no-store");
     const initial = getOrderByCheckoutToken(database, c.req.param("token"));

@@ -31,7 +31,7 @@ import { audit, getSetting, setSetting, type AppDatabase } from "./db";
 import { getRuntimeEnv } from "./env";
 import { AppError, assert } from "./errors";
 import { notificationHistory, queueManualNotification } from "./notifications";
-import { getOrderById, listOrders } from "./orders";
+import { createOrder, getOrderById, listOrders } from "./orders";
 import {
   generateRsaKeyPair,
   randomAlphaNumeric,
@@ -214,6 +214,33 @@ export function createAdminRoutes(database: AppDatabase, scanner: PaymentScanner
       offset: (page - 1) * limit,
     });
     return c.json({ ...result, page });
+  });
+
+  app.post("/orders/test", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { amount?: unknown };
+    const amount = typeof body.amount === "string" && body.amount.trim() ? body.amount.trim() : "0.01";
+    const baseUrl = getSetting(database, "public_base_url", "").replace(/\/$/, "");
+    assert(baseUrl, 400, "PUBLIC_URL_MISSING", "请先在收款配置中设置公开访问地址");
+    const pid = getSetting(database, "merchant_pid", "");
+    assert(pid, 400, "MERCHANT_PID_MISSING", "商户 ID 尚未生成");
+    const { order } = createOrder(database, {
+      pid,
+      apiVersion: "v1",
+      outTradeNo: `TEST${Date.now()}`,
+      name: "AliMPay 测试订单",
+      money: amount,
+      notifyUrl: `${baseUrl}/public-api/test-notify`,
+      param: "admin-test",
+      clientIp: clientIp(c.req.raw.headers),
+      rawRequest: { source: "admin_test", money: amount },
+    });
+    audit(database, "order.test_create", {
+      actor: c.get("admin").username,
+      targetType: "order",
+      targetId: order.id,
+      ip: clientIp(c.req.raw.headers),
+    });
+    return c.json({ order, checkout_url: `${baseUrl}/checkout/${encodeURIComponent(order.checkout_token)}` }, 201);
   });
 
   app.get("/orders/:id", (c) => {

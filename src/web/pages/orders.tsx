@@ -1,9 +1,10 @@
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, FlaskConical, Search } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
-import useSWR from "swr";
+import useSWR, { mutate as globalMutate } from "swr";
+import { toast } from "sonner";
 import type { OrderRecord, OrderStatus } from "@/shared/contracts";
-import { swrFetcher } from "@/web/api";
+import { apiFetch, jsonBody, swrFetcher } from "@/web/api";
 import { PageHeader } from "@/web/components/page-header";
 import { StatusBadge } from "@/web/components/status-badge";
 import { Button } from "@/web/components/ui/button";
@@ -19,7 +20,15 @@ interface OrdersResponse {
   page: number;
 }
 
+interface TestOrderResponse {
+  order: OrderRecord;
+  checkout_url: string;
+}
+
 export function OrdersPage() {
+  const [testAmount, setTestAmount] = useState("0.01");
+  const [creating, setCreating] = useState(false);
+  const [testOrder, setTestOrder] = useState<TestOrderResponse | null>(null);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<OrderStatus | "">("");
@@ -27,6 +36,20 @@ export function OrdersPage() {
   const path = `/admin-api/orders?page=${page}&limit=20&status=${encodeURIComponent(status)}&q=${encodeURIComponent(query)}`;
   const { data, isLoading } = useSWR<OrdersResponse>(path, swrFetcher, { refreshInterval: 5_000 });
   const pages = Math.max(1, Math.ceil((data?.total ?? 0) / 20));
+
+  async function createTestOrder() {
+    setCreating(true);
+    try {
+      const result = await apiFetch<TestOrderResponse>("/admin-api/orders/test", { method: "POST", ...jsonBody({ amount: testAmount.trim() || "0.01" }) });
+      setTestOrder(result);
+      toast.success("测试订单已创建");
+      await globalMutate((key) => typeof key === "string" && key.startsWith("/admin-api/orders"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建测试订单失败");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   function search(event: FormEvent) {
     event.preventDefault();
@@ -36,7 +59,30 @@ export function OrdersPage() {
 
   return (
     <>
-      <PageHeader title="订单" description="查询商户订单、支付匹配结果和通知投递记录。" />
+      <PageHeader
+        title="订单"
+        description="查询商户订单、支付匹配结果和通知投递记录。"
+        actions={(
+          <>
+            <Input className="w-24" value={testAmount} onChange={(event) => setTestAmount(event.target.value)} inputMode="decimal" placeholder="0.01" aria-label="测试金额（元）" />
+            <Button type="button" onClick={createTestOrder} disabled={creating}><FlaskConical />{creating ? "创建中" : "创建测试订单"}</Button>
+          </>
+        )}
+      />
+      {testOrder ? (
+        <Card className="mb-5">
+          <CardContent className="flex flex-col gap-3 pt-5 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-medium">测试订单 {testOrder.order.trade_no}</div>
+              <div className="mt-1 text-muted">请按收银台显示的金额 {formatMoney(testOrder.order.payable_amount_cents)} 付款；回调会发送到网关自带的测试接收地址并自动应答 success。</div>
+            </div>
+            <div className="flex gap-2">
+              <a href={testOrder.checkout_url} target="_blank" rel="noreferrer"><Button type="button" variant="outline"><ExternalLink />打开收银台</Button></a>
+              <Link to={`/orders/${testOrder.order.id}`}><Button type="button" variant="outline">订单详情</Button></Link>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
       <Card>
         <CardContent className="pt-5">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row">
