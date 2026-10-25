@@ -35,7 +35,7 @@ export function CheckoutPage() {
   const { token = "" } = useParams();
   const [now, setNow] = useState(Date.now());
   const mobileRedirectAttempted = useRef(false);
-  const { data, error, isLoading } = useSWR<CheckoutData>(`/public-api/checkout/${encodeURIComponent(token)}`, swrFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<CheckoutData>(`/public-api/checkout/${encodeURIComponent(token)}`, swrFetcher, {
     refreshInterval: checkoutRefreshInterval,
     refreshWhenHidden: true,
     shouldRetryOnError: false,
@@ -49,6 +49,14 @@ export function CheckoutPage() {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const finished = Boolean(data) && (data?.status === "paid" || data?.status === "late_paid" || now >= Date.parse(data?.monitor_until ?? ""));
+  useEffect(() => {
+    if (!token || finished || typeof EventSource === "undefined") return;
+    const source = new EventSource(`/public-api/checkout/${encodeURIComponent(token)}/events`);
+    source.addEventListener("status", () => { void mutate(); });
+    return () => source.close();
+  }, [token, finished, mutate]);
 
   useEffect(() => {
     if (

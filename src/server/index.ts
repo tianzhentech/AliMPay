@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
+import { streamSSE } from "hono/streaming";
 import { createAdminRoutes } from "./admin";
 import { PaymentScanner } from "./alipay";
 import { getDatabase, type AppDatabase } from "./db";
@@ -95,6 +96,33 @@ export function createApp(services?: Partial<AppServices>) {
     if (!order) throw new AppError(404, "CHECKOUT_NOT_FOUND", "支付订单不存在");
     const data = getCheckoutData(database, c.req.param("token"), buildSignedReturnUrl(database, order));
     return c.json(data);
+  });
+
+  // Server-sent events: tells the checkout page the moment the order status changes, so the page
+  // does not depend on browser timers (which browsers may throttle) to notice a payment.
+  app.get("/public-api/checkout/:token/events", (c) => {
+    const token = c.req.param("token");
+    const initial = getOrderByCheckoutToken(database, token);
+    if (!initial) throw new AppError(404, "CHECKOUT_NOT_FOUND", "支付订单不存在");
+    c.header("cache-control", "no-store");
+    c.header("x-accel-buffering", "no");
+    return streamSSE(c, async (stream) => {
+      let last = initial.status;
+      let ticks = 0;
+      await stream.writeSSE({ event: "status", data: last });
+      while (!stream.aborted && !stream.closed) {
+        await stream.sleep(500);
+        const order = getOrderByCheckoutToken(database, token);
+        if (!order) break;
+        if (order.status !== last) {
+          last = order.status;
+          await stream.writeSSE({ event: "status", data: last });
+        }
+        if (["paid", "late_paid"].includes(last) || Date.parse(order.monitor_until) <= Date.now()) break;
+        ticks += 1;
+        if (ticks % 30 === 0) await stream.writeSSE({ event: "ping", data: "1" });
+      }
+    });
   });
 
   app.get("/uploads/:filename", async (c) => {
