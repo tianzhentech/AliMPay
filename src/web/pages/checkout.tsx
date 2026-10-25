@@ -32,6 +32,7 @@ export function CheckoutPage() {
       if (latest && (["paid", "late_paid"].includes(latest.status) || Date.parse(latest.monitor_until) <= Date.now())) return 0;
       return (latest?.payment_poll_interval_seconds ?? PAYMENT_POLL_INTERVAL_DEFAULT_SECONDS) * 1_000;
     },
+    refreshWhenHidden: true,
     shouldRetryOnError: false,
   });
   const { data: generatedQr } = useSWR(
