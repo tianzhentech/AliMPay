@@ -1,0 +1,65 @@
+--- a/app/Pay/Epay/Impl/Pay.php
++++ b/app/Pay/Epay/Impl/Pay.php
+@@ -106,6 +106,15 @@
+                 $payEntity->setUrl($qrcode);
+                 $option = ['returnUrl' => $this->returnUrl];
+                 $notice = mb_substr(trim((string)($this->config['cashier_notice'] ?? '')), 0, 500);
++                //网关为区分订单会在金额上加几分钱，收银台必须显示网关返回的实际应付金额，买家按此金额付款才能自动到账
++                $gwMoney = $this->field($json, 'money');
++                if ($gwMoney !== '' && is_numeric($gwMoney) && abs((float)$gwMoney - (float)$this->amount) > 0.004 && abs((float)$gwMoney - (float)$this->amount) <= 1.0) {
++                    $gwMoney = number_format((float)$gwMoney, 2, '.', '');
++                    $option['gateway_money'] = $gwMoney;
++                    if ($notice === '') {
++                        $notice = "请务必按页面显示的金额 ¥{$gwMoney} 付款（含系统自动增加的零头），金额不一致将无法自动到账。";
++                    }
++                }
+                 if ($notice !== '') {
+                     $option['notice'] = $notice;
+                 }
+--- a/app/Service/Bind/Order.php
++++ b/app/Service/Bind/Order.php
+@@ -990,6 +990,10 @@
+ 
+                     $trade = $payObject->trade();
+                     if ($trade instanceof PayEntity) {
++                        $gwMoney = $trade->getOption()['gateway_money'] ?? null;
++                        if ($gwMoney !== null && is_numeric($gwMoney)) {
++                            $order->gateway_amount = (float)$gwMoney;
++                        }
+                         $order->pay_url = $trade->getUrl();
+                         switch ($trade->getType()) {
+                             case \App\Pay\Pay::TYPE_REDIRECT:
+@@ -1365,6 +1369,10 @@
+             $expectSource = $order->gateway_amount !== null ? (string)$order->gateway_amount : (string)$order->amount;
+             $expectAmount = (new Decimal($expectSource, 2))->getAmount();
+             $actualAmount = (new Decimal((string)$paidAmount, 2))->getAmount();
++            //网关会给订单加零头：回调金额既可能是实际应付金额(gateway_amount)，也可能是下单原价
++            if (!hash_equals($expectAmount, $actualAmount) && hash_equals((new Decimal((string)Currency::toCny($order->amount), 2))->getAmount(), $actualAmount)) {
++                $actualAmount = $expectAmount;
++            }
+             if (!hash_equals($expectAmount, $actualAmount)) {
+                 self::callbackFail($handle, "amount", self::CALLBACK_REJECT, $tradeNo, $map, "订单金额不匹配");
+             }
+--- a/app/Service/Bind/Recharge.php
++++ b/app/Service/Bind/Recharge.php
+@@ -113,6 +113,10 @@
+             $trade = $payObject->trade();
+ 
+             if ($trade instanceof PayEntity) {
++                $gwMoney = $trade->getOption()['gateway_money'] ?? null;
++                if ($gwMoney !== null && is_numeric($gwMoney)) {
++                    $order->gateway_amount = (float)$gwMoney;
++                }
+                 $order->pay_url = $trade->getUrl();
+                 switch ($trade->getType()) {
+                     case \App\Pay\Pay::TYPE_REDIRECT:
+@@ -212,6 +216,9 @@
+             $expectSource = $order->gateway_amount !== null ? (string)$order->gateway_amount : (string)$order->amount;
+             $expectAmount = (new \Kernel\Util\Decimal($expectSource, 2))->getAmount();
+             $actualAmount = (new \Kernel\Util\Decimal((string)$paidAmount, 2))->getAmount();
++            if (!hash_equals($expectAmount, $actualAmount) && hash_equals((new \Kernel\Util\Decimal((string)Currency::toCny($order->amount), 2))->getAmount(), $actualAmount)) {
++                $actualAmount = $expectAmount;
++            }
+             if (!hash_equals($expectAmount, $actualAmount)) {
+                 \App\Service\Bind\Order::callbackFail($handle, "amount", $reject, $tradeNo, $map, "订单金额不匹配", "CALLBACK-RECHARGE");
+             }
